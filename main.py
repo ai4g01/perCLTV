@@ -84,7 +84,7 @@ for train_index, test_index in kfold.split(B, y1):
     mask_val[val_index] = True
     mask_test[test_index] = True
 
-    checkpoint_path = './model/checkpoint-{epoch:04d}.ckpt'
+    checkpoint_path = './output/ckpts/checkpoint-{epoch:04d}.weights.h5'
     checkpoint_dir = os.path.dirname(checkpoint_path)
 
     if os.path.exists(checkpoint_dir):

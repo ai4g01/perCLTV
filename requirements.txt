@@ -1,0 +1,13 @@
+tensorflow
+spektral
+attention==5.0.0
+numpy
+pandas
+scikit-learn
+
+# tensorflow == 2.12.0
+# spektral == 1.2.0
+# attention == 5.0.0
+# numpy == 1.23.5
+# pandas == 2.0.0
+# scikit-learn == 1.2.2

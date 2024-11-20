@@ -79,4 +79,4 @@ class perCLTV(tf.keras.Model):
         output1 = self.output1(h_churn)
         output2 = self.output2(tf.keras.layers.Concatenate()(
             [tf.keras.layers.Multiply()([gate, h_churn]), h_pay]))
-        return output1, output2
+        return {"output_1": output1, "output_2": output2}
