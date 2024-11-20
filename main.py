@@ -8,6 +8,9 @@ import spektral
 import tensorflow as tf
 from sklearn.model_selection import StratifiedKFold, train_test_split
 
+from datetime import datetime
+import matplotlib.pyplot as plt
+
 from src.model import perCLTV
 
 ##############################
@@ -19,6 +22,17 @@ beta2 = 0.5
 timestep = 10
 maxlen = 64
 ##############################
+
+
+def plot_loss(df_hist, run_id, kfold):
+    plt.plot(df_hist.index, df_hist['loss'], label='train_loss')
+    plt.plot(df_hist.index, df_hist['val_loss'], label='val_loss')
+    
+    plt.title(f"Training and Validation Loss - {run_id}-{kfold}")
+    plt.xlabel("Epochs")
+    plt.ylabel("Loss")
+    plt.legend()
+    plt.savefig(f"./output/ckpts/{run_id}/loss-{kfold}.png")
 
 
 def data_process(timestep=10, maxlen=64):
@@ -67,54 +81,80 @@ def data_process(timestep=10, maxlen=64):
     return B, C, P, A, y1, y2
 
 
-B, C, P, A, y1, y2 = data_process(timestep=timestep, maxlen=maxlen)
-N = A.shape[0]
+def main():
+    B, C, P, A, y1, y2 = data_process(timestep=timestep, maxlen=maxlen)
+    N = A.shape[0]
+
+    kfold = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed_value)
+    run_id = datetime.now().strftime('%y%m%d%H%M%S')
+
+    df_list = [ ]
+    for kfold, item in enumerate(kfold.split(B, y1)):
+        train_index, test_index = item
+        train_index, val_index = train_test_split(
+            train_index, test_size=0.1, random_state=seed_value)
+
+        mask_train = np.zeros(N, dtype=bool)
+        mask_val = np.zeros(N, dtype=bool)
+        mask_test = np.zeros(N, dtype=bool)
+        mask_train[train_index] = True
+        mask_val[val_index] = True
+        mask_test[test_index] = True
+
+        # 覆盖文件方式，仅保留最好的一个模型
+        checkpoint_path = f'./output/ckpts/{run_id}/ckpt-{kfold}.weights.h5'
+        # checkpoint_path = f'./output/ckpts/{run_id}/ckpt-{kfold}-' + '{epoch:04d}-{val_loss:.4f}.weights.h5'
+        # checkpoint_dir = os.path.dirname(checkpoint_path)
+
+        # if os.path.exists(checkpoint_dir):
+        #     shutil.rmtree(checkpoint_dir)
+
+        early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss',
+                                                        patience=10,
+                                                        mode='min')
+
+        best_checkpoint = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
+                                                            monitor='val_loss',
+                                                            verbose=1,
+                                                            save_best_only=True,
+                                                            save_weights_only=True,
+                                                            mode='auto')
+
+        model = perCLTV(timestep=timestep, behavior_maxlen=maxlen)
+
+        model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=lr),
+                    loss={'output_1': tf.keras.losses.BinaryCrossentropy(),
+                            'output_2': tf.keras.losses.MeanSquaredError()},
+                    loss_weights={'output_1': beta1, 'output_2': beta2},
+                    metrics={'output_1': tf.keras.metrics.AUC(),
+                            'output_2': 'mae'})
+
+        hist = model.fit([B, C, P, A], [y1, y2],
+                validation_data=([B, C, P, A], [y1, y2], mask_val),
+                sample_weight=mask_train,
+                batch_size=N,
+                epochs=epochs,
+                shuffle=False,
+                callbacks=[early_stopping, best_checkpoint],
+                verbose=1)
+        
+        
+        df_hist = pd.DataFrame(hist.history)
+        df_hist['run_id'] = f"{run_id}-{kfold}"
+        df_hist.reset_index(inplace=True, drop=False, names=['epoch'])
+        df_list.append(df_hist)
+        
+        plot_loss(df_hist, run_id, kfold)
+        eval_result = model.evaluate([B, C, P, A], [y1, y2], 
+                                     sample_weight=mask_test,
+                                     batch_size=N,
+                                     return_dict=True)
+        print(eval_result)
+        break
+    
+    df_hist_all = pd.concat(df_list)
+    df_hist_all.to_csv(f'./output/ckpts/{run_id}/history.csv', index=False)
 
 
-kfold = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed_value)
-
-for train_index, test_index in kfold.split(B, y1):
-    train_index, val_index = train_test_split(
-        train_index, test_size=0.1, random_state=seed_value)
-
-    mask_train = np.zeros(N, dtype=bool)
-    mask_val = np.zeros(N, dtype=bool)
-    mask_test = np.zeros(N, dtype=bool)
-    mask_train[train_index] = True
-    mask_val[val_index] = True
-    mask_test[test_index] = True
-
-    checkpoint_path = './output/ckpts/checkpoint-{epoch:04d}.weights.h5'
-    checkpoint_dir = os.path.dirname(checkpoint_path)
-
-    if os.path.exists(checkpoint_dir):
-        shutil.rmtree(checkpoint_dir)
-
-    early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss',
-                                                      patience=5,
-                                                      mode='min')
-
-    best_checkpoint = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
-                                                         monitor='val_loss',
-                                                         verbose=1,
-                                                         save_best_only=True,
-                                                         save_weights_only=True,
-                                                         mode='auto')
-
-    model = perCLTV(timestep=timestep, behavior_maxlen=maxlen)
-
-    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=lr),
-                  loss={'output_1': tf.keras.losses.BinaryCrossentropy(),
-                        'output_2': tf.keras.losses.MeanSquaredError()},
-                  loss_weights={'output_1': beta1, 'output_2': beta2},
-                  metrics={'output_1': tf.keras.metrics.AUC(),
-                           'output_2': 'mae'})
-
-    model.fit([B, C, P, A], [y1, y2],
-              validation_data=([B, C, P, A], [y1, y2], mask_val),
-              sample_weight=mask_train,
-              batch_size=N,
-              epochs=epochs,
-              shuffle=False,
-              callbacks=[early_stopping, best_checkpoint],
-              verbose=1)
+if __name__ == "__main__":
+    main()
