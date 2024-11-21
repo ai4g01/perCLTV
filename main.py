@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 
@@ -14,26 +15,61 @@ import matplotlib.pyplot as plt
 from src.model import perCLTV
 
 ##############################
-seed_value = 2023
-lr = 0.0001
-epochs = 500
-beta1 = 0.5
-beta2 = 0.5
-timestep = 10
-maxlen = 64
+args = {
+    "seed_value": 2023,
+    "lr": 0.0003,
+    "epochs": 300,
+    "beta1": 0.5,
+    "beta2": 0.5,
+    "timestep": 10,
+    "maxlen": 64,
+    "scheduler": 'linear',
+    "lr_decay": 0.1
+}
 ##############################
 
 
 def plot_loss(df_hist, run_id, kfold):
+    plt.figure()
     plt.plot(df_hist.index, df_hist['loss'], label='train_loss')
+    # plt.plot(df_hist.index, df_hist['output_1_loss'], label='train_loss_1')
+    plt.plot(df_hist.index, df_hist['output_2_loss'], label='train_loss_2')
+
     plt.plot(df_hist.index, df_hist['val_loss'], label='val_loss')
+    # plt.plot(df_hist.index, df_hist['val_output_1_loss'], label='val_loss_1')
+    plt.plot(df_hist.index, df_hist['val_output_2_loss'], label='val_loss_2')
     
     plt.title(f"Training and Validation Loss - {run_id}-{kfold}")
     plt.xlabel("Epochs")
     plt.ylabel("Loss")
     plt.legend()
-    plt.savefig(f"./output/ckpts/{run_id}/loss-{kfold}.png")
+    
+    fn = f"./output/ckpts/{run_id}/loss-{kfold}.png"
+    print(f"save loss curve to {fn}")
+    
+    plt.savefig(fn)
+    plt.close()
 
+
+def create_optimizer(args):
+    if args['scheduler'] == 'cosine':
+        lr_decayed_fn = tf.keras.optimizers.schedules.CosineDecay(
+            initial_learning_rate=args['lr'], decay_steps=args['epochs'], 
+            alpha=args['lr_decay'])
+    elif args['scheduler'] == 'linear':
+        lr_decayed_fn = tf.keras.optimizers.schedules.PolynomialDecay(
+            initial_learning_rate=args['lr'], decay_steps=args['epochs'], 
+            power=1.0, end_learning_rate=args['lr'] * args['lr_decay'])
+    elif args['scheduler'] == 'exponential':
+        lr_decayed_fn = tf.keras.optimizers.schedules.Exponential(
+            initial_learning_rate=args['lr'], decay_steps=args['epochs'], 
+            end_learning_rate=args['lr'] * args['lr_decay'])
+    elif args['scheduler'] == 'constant':
+        lr_decayed_fn = args['lr']
+    else:
+        raise ValueError
+
+    return tf.keras.optimizers.Adam(learning_rate=lr_decayed_fn)
 
 def data_process(timestep=10, maxlen=64):
     df_S = pd.read_csv('./data/sample_data_individual_behavior.csv')
@@ -82,17 +118,18 @@ def data_process(timestep=10, maxlen=64):
 
 
 def main():
-    B, C, P, A, y1, y2 = data_process(timestep=timestep, maxlen=maxlen)
+    B, C, P, A, y1, y2 = data_process(timestep=args['timestep'], maxlen=args['maxlen'])
     N = A.shape[0]
 
-    kfold = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed_value)
+    kfold = StratifiedKFold(n_splits=5, shuffle=True, random_state=args['seed_value'])
     run_id = datetime.now().strftime('%y%m%d%H%M%S')
 
     df_list = [ ]
+    results_list = []
     for kfold, item in enumerate(kfold.split(B, y1)):
         train_index, test_index = item
         train_index, val_index = train_test_split(
-            train_index, test_size=0.1, random_state=seed_value)
+            train_index, test_size=0.1, random_state=args['seed_value'])
 
         mask_train = np.zeros(N, dtype=bool)
         mask_val = np.zeros(N, dtype=bool)
@@ -120,12 +157,14 @@ def main():
                                                             save_weights_only=True,
                                                             mode='auto')
 
-        model = perCLTV(timestep=timestep, behavior_maxlen=maxlen)
+        model = perCLTV(timestep=args['timestep'], behavior_maxlen=args['maxlen'])
 
-        model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=lr),
+        optimizer = create_optimizer(args)
+
+        model.compile(optimizer=optimizer,
                     loss={'output_1': tf.keras.losses.BinaryCrossentropy(),
                             'output_2': tf.keras.losses.MeanSquaredError()},
-                    loss_weights={'output_1': beta1, 'output_2': beta2},
+                    loss_weights={'output_1': args['beta1'], 'output_2': args['beta2']},
                     metrics={'output_1': tf.keras.metrics.AUC(),
                             'output_2': 'mae'})
 
@@ -133,11 +172,10 @@ def main():
                 validation_data=([B, C, P, A], [y1, y2], mask_val),
                 sample_weight=mask_train,
                 batch_size=N,
-                epochs=epochs,
+                epochs=args['epochs'],
                 shuffle=False,
                 callbacks=[early_stopping, best_checkpoint],
                 verbose=1)
-        
         
         df_hist = pd.DataFrame(hist.history)
         df_hist['run_id'] = f"{run_id}-{kfold}"
@@ -150,11 +188,30 @@ def main():
                                      batch_size=N,
                                      return_dict=True)
         print(eval_result)
+        results_list.append(eval_result)
         break
     
     df_hist_all = pd.concat(df_list)
     df_hist_all.to_csv(f'./output/ckpts/{run_id}/history.csv', index=False)
 
+    results = {
+        "args": args,
+        "eval_results": results_list,
+    }
+    
+    with open(f'./output/ckpts/{run_id}/results.json', 'w') as f:
+        json.dump(results, f, indent=4)
+
+
+def plot_test():
+    kfold = 0
+    for run_id in ["241120123658", "241120130901", "241120132150"]:
+        df_hist = pd.read_csv(f'./output/ckpts/{run_id}/history.csv')
+        df_hist = df_hist[df_hist['run_id'] == f'{run_id}-{kfold}']
+        plot_loss(df_hist, run_id, kfold)
+
 
 if __name__ == "__main__":
+    # plot_test()
+    
     main()
