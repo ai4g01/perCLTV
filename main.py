@@ -158,8 +158,10 @@ def main():
                                                           save_weights_only=True,
                                                           mode='auto')
 
-        model = perCLTV(timestep=args['timestep'],
+        model: keras.Model = perCLTV(timestep=args['timestep'],
                         behavior_maxlen=args['maxlen'])
+        
+        model.summary()
 
         optimizer = create_optimizer(args)
         
@@ -170,7 +172,7 @@ def main():
                           'output_1': args['beta1'], 'output_2': args['beta2']},
                       metrics={'output_1': keras.metrics.AUC(),
                                'output_2': 'mae'})
-
+        
         hist = model.fit([B, C, P, A], [y1, y2],
                          validation_data=([B, C, P, A], [y1, y2], mask_val),
                          sample_weight=mask_train,
@@ -186,15 +188,17 @@ def main():
                                      batch_size=N,
                                      return_dict=True)
         df_hist = pd.DataFrame(hist.history)
-        df_hist['run_id'] = f"{run_id}-{kfold_idx}"
         
         # loss 对齐到每样本的loss
         for key in ['loss', 'output_1_loss', 'output_2_loss']:
             df_hist[key] = df_hist[key] * N / mask_train.sum()
             df_hist[f"val_{key}"] = df_hist[f"val_{key}"] * \
                 N / mask_val.sum()
-            eval_result[key] = eval_result[key] * N / mask_test.sum()
+            eval_result[key] = float(eval_result[key] * N / mask_test.sum())
+        
+        df_hist = df_hist.round(5)
 
+        df_hist['run_id'] = f"{run_id}-{kfold_idx}"
         df_hist.reset_index(inplace=True, drop=False, names=['epoch'])
         df_list.append(df_hist)
 

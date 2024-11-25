@@ -1,10 +1,11 @@
 import spektral
 import tensorflow as tf
+import keras
 
 from attention import Attention
 
 
-class perCLTV(tf.keras.Model):
+class perCLTV(keras.Model):
     def __init__(self,
                  timestep=10,
                  behavior_num=100 + 1,
@@ -23,47 +24,48 @@ class perCLTV(tf.keras.Model):
         self.behavior_dim = behavior_dim
         self.network_dim = network_dim
 
-        self.embedding = tf.keras.layers.Embedding(input_dim=self.behavior_num,
-                                                   output_dim=self.behavior_emb_dim,
-                                                   mask_zero=True)
+        self.embedding = keras.layers.Embedding(input_dim=self.behavior_num,
+                                                output_dim=self.behavior_emb_dim,
+                                                mask_zero=True)
 
-        self.individual_behavior_nets = [tf.keras.Sequential(
+        self.individual_behavior_nets = [keras.Sequential(
             name='individual_behavior_net_'+str(x),
             layers=[self.embedding,
-                    tf.keras.layers.Lambda(lambda x: tf.reshape(
+                    keras.layers.Lambda(lambda x: tf.reshape(
                         x, (-1, self.behavior_maxlen, self.behavior_emb_dim))),
-                    tf.keras.layers.LSTM(units=self.behavior_dim,
-                                         return_sequences=False),
-                    tf.keras.layers.Lambda(lambda x: tf.reshape(
+                    keras.layers.LSTM(units=self.behavior_dim,
+                                      return_sequences=False),
+                    keras.layers.Lambda(lambda x: tf.reshape(
                         x, (-1, self.timestep, self.behavior_dim))),
-                    tf.keras.layers.LSTM(units=self.behavior_dim,
-                                         return_sequences=True),
+                    keras.layers.LSTM(units=self.behavior_dim,
+                                      return_sequences=True),
                     Attention(units=self.behavior_dim, score='luong'),
-                    tf.keras.layers.Dense(units=self.behavior_dim,
-                                          activation='relu',
-                                          use_bias=False)]) for x in range(3)]
+                    keras.layers.Dense(units=self.behavior_dim,
+                                       activation='relu',
+                                       use_bias=False)]) for x in range(3)]
 
-        self.social_behavior_net = tf.keras.Sequential(
+        self.social_behavior_net = keras.Sequential(
             name='social_behavior_net',
             layers=[spektral.layers.GATConv(channels=self.network_dim,
                                             activation='relu'),
-                    tf.keras.layers.Dropout(rate=self.dropout),
-                    tf.keras.layers.Dense(units=self.network_dim,
-                                          activation='relu')])
-        self.hban = tf.keras.Sequential(name='hierarchical_behavioral_attention_net',
-                                        layers=[tf.keras.layers.Concatenate(axis=-1),
-                                                tf.keras.layers.Conv1D(
-                                            filters=self.behavior_dim, kernel_size=1),
-                                            tf.keras.layers.GlobalAveragePooling1D()])
-        self.h_churn = tf.keras.layers.Dense(
+                    keras.layers.Dropout(rate=self.dropout),
+                    keras.layers.Dense(units=self.network_dim,
+                                       activation='relu')])
+        self.hban = keras.Sequential(
+            name='hierarchical_behavioral_attention_net',
+            layers=[keras.layers.Concatenate(axis=-1),
+                    keras.layers.Conv1D(
+                        filters=self.behavior_dim, kernel_size=1),
+                    keras.layers.GlobalAveragePooling1D()])
+        self.h_churn = keras.layers.Dense(
             units=self.network_dim, activation='relu', name='h_churn')
-        self.h_pay = tf.keras.layers.Dense(
+        self.h_pay = keras.layers.Dense(
             units=self.network_dim, activation='relu', name='h_pay')
-        self.gate = tf.keras.layers.Dense(
+        self.gate = keras.layers.Dense(
             units=self.network_dim, activation='sigmoid', name='gate')
-        self.output1 = tf.keras.layers.Dense(
+        self.output1 = keras.layers.Dense(
             units=1, activation='sigmoid', name='output1')
-        self.output2 = tf.keras.layers.Dense(
+        self.output2 = keras.layers.Dense(
             units=1, activation=None, name='output2')
 
     def call(self, inputs):
